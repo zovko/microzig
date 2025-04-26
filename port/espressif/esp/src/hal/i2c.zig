@@ -85,18 +85,18 @@ const Command = union(enum) {
     },
 
     /// Convert command to register value
-    pub fn toValue(self: Command) u16 {
-        var cmd: u16 = 0;
+    pub fn toValue(self: Command) u14 {
+        var cmd: u14 = 0;
 
         switch (self) {
             .Start, .Stop => {
                 cmd = 0;
             },
             .Write => |write| {
-                cmd = @as(u16, write.length);
+                cmd = @as(u14, write.length);
             },
             .Read => |read| {
-                cmd = @as(u16, read.length);
+                cmd = @as(u14, read.length);
             },
         }
 
@@ -107,7 +107,7 @@ const Command = union(enum) {
             .Write => .WRITE,
             .Read => .READ,
         };
-        cmd |= @as(u16, @intFromEnum(opcode)) << 11;
+        cmd |= @as(u14, @intFromEnum(opcode)) << 11;
 
         // Set ack_check_en bit
         if (self == .Write and self.Write.ack_check_en) {
@@ -394,9 +394,8 @@ pub const I2C = enum(u1) {
             }
 
             // Check for completion
-            if (interrupts.TRANS_COMPLETE_INT_RAW == 1 or interrupts.END_DETECT_INT_RAW == 1) {
+            if (interrupts.TRANS_COMPLETE_INT_RAW == 1 or interrupts.END_DETECT_INT_RAW == 1)
                 break;
-            }
 
             // Check for timeout
             if (deadline.is_reached_by(time.get_time_since_boot())) {
@@ -406,7 +405,8 @@ pub const I2C = enum(u1) {
 
         // Verify all commands were executed
         var i: usize = 0;
-        while (i < 16) : (i += 1) {
+        while (i < 8) : (i += 1) {
+            // while (i < 16) : (i += 1) {
             const cmd = self.get_regs().COMD[i].read();
             if (cmd.COMMAND != 0 and cmd.COMMAND_DONE == 0) {
                 return Error.ExecutionIncomplete;
@@ -421,9 +421,8 @@ pub const I2C = enum(u1) {
         }
 
         // START command
-        self.get_regs().COMD[cmd_start_idx.*].write(.{
-            .COMMAND = @intFromEnum(Opcode.RSTART),
-            .COMMAND_DONE = 0,
+        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+            .COMMAND = Command.toValue(.Start),
         });
         cmd_start_idx.* += 1;
 
@@ -441,15 +440,14 @@ pub const I2C = enum(u1) {
             .ack_check_en = 1,
             .length = @intCast(1 + bytes.len),
         };
-        self.get_regs().COMD[cmd_start_idx.*].write(.{
-            .bits = write_cmd.toValue(),
+        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+            .COMMAND = write_cmd.toValue(),
         });
         cmd_start_idx.* += 1;
 
         // STOP command
-        self.get_regs().COMD[cmd_start_idx.*].write(.{
-            .COMMAND = @intFromEnum(Opcode.STOP),
-            .COMMAND_DONE = 0,
+        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+            .COMMAND = Command.toValue(.Stop),
         });
         cmd_start_idx.* += 1;
     }
@@ -459,14 +457,15 @@ pub const I2C = enum(u1) {
         // Check if we have enough command registers
         // If buffer > 1, we need START, WRITE, READ, READ, STOP
         const needed_cmds: usize = if (buffer_len > 1) 5 else 4;
-        if (cmd_start_idx.* + needed_cmds > 16) {
+        // TODO: Isn't there only 8 commands?
+        if (cmd_start_idx.* + needed_cmds > 8) {
+            // if (cmd_start_idx.* + needed_cmds > 16) {
             return Error.CommandNumberExceeded;
         }
 
         // START command
-        self.get_regs().COMD[cmd_start_idx.*].write(.{
-            .COMMAND = @intFromEnum(Opcode.RSTART),
-            .COMMAND_DONE = 0,
+        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+            .COMMAND = Command.toValue(.Start),
         });
         cmd_start_idx.* += 1;
 
@@ -481,7 +480,9 @@ pub const I2C = enum(u1) {
             .ack_check_en = true,
             .length = 1,
         } };
-        self.get_regs().COMD[cmd_start_idx.*].write_raw(write_cmd.toValue());
+        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+            .COMMAND = write_cmd.toValue(),
+        });
         cmd_start_idx.* += 1;
 
         // For reading multiple bytes, first n-1 bytes with ACK
@@ -490,7 +491,9 @@ pub const I2C = enum(u1) {
                 .ack_value = .Ack,
                 .length = @intCast(buffer_len - 1),
             } };
-            self.get_regs().COMD[cmd_start_idx.*].write_raw(read_cmd.toValue());
+            self.get_regs().COMD[cmd_start_idx.*].modify(.{
+                .COMMAND = read_cmd.toValue(),
+            });
             cmd_start_idx.* += 1;
         }
 
@@ -499,23 +502,27 @@ pub const I2C = enum(u1) {
             .ack_value = .Nack,
             .length = 1,
         } };
-        self.get_regs().COMD[cmd_start_idx.*].write_raw(last_read_cmd.toValue());
+        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+            .COMMAND = last_read_cmd.toValue(),
+        });
         cmd_start_idx.* += 1;
 
         // STOP command
-        self.get_regs().COMD[cmd_start_idx.*].write(.{
+        self.get_regs().COMD[cmd_start_idx.*].modify(.{
             .COMMAND = @intFromEnum(Opcode.STOP),
-            .COMMAND_DONE = 0,
         });
         cmd_start_idx.* += 1;
     }
 
     /// Read data from an I2C slave
     pub fn read_blocking(self: I2C, addr: Address, dst: []u8, timeout: ?mdf.time.Duration) !void {
+        // TODO: readv_blocking
+        if (addr.is_reserved())
+            return error.AddressInvalid;
+
         // Check if buffer exceeds FIFO size
-        if (dst.len > 31) {
+        if (dst.len > 31)
             return Error.FifoExceeded;
-        }
 
         // Reset FIFO and command list
         self.reset_fifo();
@@ -536,6 +543,10 @@ pub const I2C = enum(u1) {
 
     /// Write data to an I2C slave
     pub fn write_blocking(self: I2C, addr: u8, src: []const u8, timeout: ?mdf.time.Duration) !void {
+        // TODO: writev_blocking
+        if (addr.is_reserved())
+            return error.AddressInvalid;
+
         // Split data into chunks that fit in TX FIFO (31 bytes max + 1 addr byte)
         var chunk_start: usize = 0;
 
@@ -564,9 +575,8 @@ pub const I2C = enum(u1) {
     /// Write data then read data from an I2C slave
     pub fn write_then_read_blocking(self: I2C, addr: Address, src: []const u8, dst: []u8, timeout: ?mdf.time.Duration) !void {
         // Check if buffers exceed FIFO size
-        if (src.len > 31 or dst.len > 31) {
+        if (src.len > 31 or dst.len > 31)
             return Error.FifoExceeded;
-        }
 
         // Reset FIFO and command list
         self.reset_fifo();
