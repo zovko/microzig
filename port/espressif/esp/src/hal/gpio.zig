@@ -107,6 +107,7 @@ pub const Pin = enum(u5) {
                 usb_conf0.DM_PULLDOWN == 0);
         }
 
+        // Enable output
         GPIO.ENABLE_W1TS.write(.{ .ENABLE_W1TS = @as(u26, 1) << n });
     }
 
@@ -124,8 +125,7 @@ pub const Pin = enum(u5) {
     }
 
     pub fn set_input_enable(self: Pin, enable: bool) void {
-        const n = @intFromEnum(self);
-        IO_MUX.GPIO[n].modify(.{ .FUN_IE = @intFromBool(enable) });
+        IO_MUX.GPIO[@intFromEnum(self)].modify(.{ .FUN_IE = @intFromBool(enable) });
     }
 
     /// Connect input to peripheral.
@@ -200,21 +200,44 @@ pub const Pin = enum(u5) {
     }
 
     pub fn set_open_drain(self: Pin, enable: bool) void {
-        GPIO.PIN[@intFromEnum(self)].modify(.{ .PIN_PAD_DRIVER = @intFromBool(enable) });
+        const n = @intFromEnum(self);
+        // Set open-drain
+        GPIO.PIN[n].modify(.{ .PIN_PAD_DRIVER = @intFromBool(enable) });
+
+        GPIO.FUNC_OUT_SEL_CFG[n].modify(.{
+            .OUT_SEL = @intFromEnum(OutputSignal.gpio),
+        });
+
+        // Effectively disable pullup?
+        IO_MUX.GPIO[n].modify(.{
+            .FUN_IE = 0,
+            .FUN_WPD = 0,
+            .FUN_WPU = 0,
+            .FUN_DRV = @intFromEnum(DriveStrength.@"20mA"),
+            .SLP_SEL = 0,
+        });
     }
 
     pub fn set_pullup(self: Pin, enable: bool) void {
         IO_MUX.GPIO[@intFromEnum(self)].modify(.{
-            // TODO: Was this a bug? Only setting it for sleep mode?
             .FUN_WPU = @intFromBool(enable),
+        });
+    }
+
+    pub fn set_pullup_sleep(self: Pin, enable: bool) void {
+        IO_MUX.GPIO[@intFromEnum(self)].modify(.{
             .MCU_WPU = @intFromBool(enable),
         });
     }
 
     pub fn set_pulldown(self: Pin, enable: bool) void {
         IO_MUX.GPIO[@intFromEnum(self)].modify(.{
-            // TODO: Was this a bug? Only setting it for sleep mode?
             .FUN_WPD = @intFromBool(enable),
+        });
+    }
+
+    pub fn set_pulldown_sleep(self: Pin, enable: bool) void {
+        IO_MUX.GPIO[@intFromEnum(self)].modify(.{
             .MCU_WPD = @intFromBool(enable),
         });
     }
@@ -238,16 +261,16 @@ pub const Pin = enum(u5) {
     }
 
     // Configure the pin as an output GPIO with open drain enabled
-    pub fn set_to_open_drain_output(self: Pin, enable: bool) void {
+    pub fn set_open_drain_output(self: Pin, enable: bool) void {
         const n = @intFromEnum(self);
         // Disable input & pull up/down resistors
         IO_MUX.GPIO[n].modify(.{
             .MCU_SEL = @intFromEnum(AlternateFunction.function1),
-            .FUN_IE = false,
-            .FUN_WPU = false,
-            .FUN_WPD = false,
+            .FUN_IE = 0,
+            .FUN_WPU = 0,
+            .FUN_WPD = 0,
             .FUN_DRV = @intFromEnum(DriveStrength.@"20mA"),
-            .SLP_SEL = false,
+            .SLP_SEL = 0,
         });
 
         // Enable open drain
@@ -259,13 +282,11 @@ pub const Pin = enum(u5) {
         });
 
         // Enable output
-        GPIO.ENABLE_W1TS.write(.{
-            .bits = @as(u32, 1) << (n % 32),
-        });
+        GPIO.ENABLE_W1TS.write_raw(@as(u32, 1) << n);
     }
 
     pub fn enable_open_drain(self: Pin, enable: bool) void {
-        GPIO.PIN[@enumFromInt(self)].modify(.{
+        GPIO.PIN[@intFromEnum(self)].modify(.{
             .PIN_PAD_DRIVER = @intFromBool(enable),
         });
     }
