@@ -421,8 +421,9 @@ pub const I2C = enum(u1) {
         }
 
         // START command
-        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+        self.get_regs().COMD[cmd_start_idx.*].write(.{
             .COMMAND = Command.toValue(.Start),
+            .COMMAND_DONE = 0,
         });
         cmd_start_idx.* += 1;
 
@@ -440,14 +441,16 @@ pub const I2C = enum(u1) {
             .ack_check_en = 1,
             .length = @intCast(1 + bytes.len),
         };
-        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+        self.get_regs().COMD[cmd_start_idx.*].write(.{
             .COMMAND = write_cmd.toValue(),
+            .COMMAND_DONE = 0,
         });
         cmd_start_idx.* += 1;
 
         // STOP command
-        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+        self.get_regs().COMD[cmd_start_idx.*].write(.{
             .COMMAND = Command.toValue(.Stop),
+            .COMMAND_DONE = 0,
         });
         cmd_start_idx.* += 1;
     }
@@ -464,8 +467,9 @@ pub const I2C = enum(u1) {
         }
 
         // START command
-        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+        self.get_regs().COMD[cmd_start_idx.*].write(.{
             .COMMAND = Command.toValue(.Start),
+            .COMMAND_DONE = 0,
         });
         cmd_start_idx.* += 1;
 
@@ -480,8 +484,9 @@ pub const I2C = enum(u1) {
             .ack_check_en = true,
             .length = 1,
         } };
-        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+        self.get_regs().COMD[cmd_start_idx.*].write(.{
             .COMMAND = write_cmd.toValue(),
+            .COMMAND_DONE = 0,
         });
         cmd_start_idx.* += 1;
 
@@ -491,8 +496,9 @@ pub const I2C = enum(u1) {
                 .ack_value = .Ack,
                 .length = @intCast(buffer_len - 1),
             } };
-            self.get_regs().COMD[cmd_start_idx.*].modify(.{
+            self.get_regs().COMD[cmd_start_idx.*].write(.{
                 .COMMAND = read_cmd.toValue(),
+                .COMMAND_DONE = 0,
             });
             cmd_start_idx.* += 1;
         }
@@ -502,16 +508,20 @@ pub const I2C = enum(u1) {
             .ack_value = .Nack,
             .length = 1,
         } };
-        self.get_regs().COMD[cmd_start_idx.*].modify(.{
+        self.get_regs().COMD[cmd_start_idx.*].write(.{
             .COMMAND = last_read_cmd.toValue(),
+            .COMMAND_DONE = 0,
         });
         cmd_start_idx.* += 1;
 
         // STOP command
-        self.get_regs().COMD[cmd_start_idx.*].modify(.{
-            .COMMAND = @intFromEnum(Opcode.STOP),
+        self.get_regs().COMD[cmd_start_idx.*].write(.{
+            .COMMAND = Command.toValue(.Stop),
+            .COMMAND_DONE = 0,
         });
         cmd_start_idx.* += 1;
+
+        // NOTE: These read back as 0. What is going on?
     }
 
     /// Read data from an I2C slave
