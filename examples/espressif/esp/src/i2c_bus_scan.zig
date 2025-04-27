@@ -16,8 +16,8 @@ pub const microzig_options = microzig.Options{
 };
 
 pub fn main() !void {
-    var sda_pin = gpio.num(5);
-    var scl_pin = gpio.num(6);
+    const sda_pin = gpio.num(5);
+    const scl_pin = gpio.num(6);
     // TODO: Probably not needed?
     // inline for (&.{ scl_pin, sda_pin }) |pin| {
     //     // Give the pin a sane default config
@@ -25,7 +25,7 @@ pub fn main() !void {
     // }
 
     try i2c0.apply(
-        .{ .sda = &sda_pin, .scl = &scl_pin },
+        .{ .sda = sda_pin, .scl = scl_pin },
         // TODO: Take hal.clock_config?
         100_000,
     );

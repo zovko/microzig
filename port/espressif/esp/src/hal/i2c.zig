@@ -148,8 +148,8 @@ const OpKind = enum(u1) {
 
 /// Pins used by the I2C interface
 pub const Pins = struct {
-    sda: *gpio.Pin,
-    scl: *gpio.Pin,
+    sda: gpio.Pin,
+    scl: gpio.Pin,
 };
 
 pub const instance = struct {
@@ -164,9 +164,6 @@ const I2cRegs = microzig.chip.types.peripherals.I2C0;
 /// I2C Master peripheral driver
 pub const I2C = enum(u1) {
     _,
-    // TODO: Do we need/want to store this?
-    // sda_pin: gpio.Pin,
-    // scl_pin: gpio.Pin,
 
     inline fn get_regs(i2c: I2C) *volatile I2cRegs {
         _ = i2c;
