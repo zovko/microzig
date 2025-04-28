@@ -197,14 +197,19 @@ pub const I2C = enum(u1) {
         i2c.clear_interrupts();
 
         // Configure controller
+        // NOTE: This doesn't seem to apply. It just reads back the reset value
         regs.CTR.modify(.{
             .MS_MODE = 1, // Set I2C controller to master mode
-            .SDA_FORCE_OUT = 1, // Use open drain output for SDA
-            .SCL_FORCE_OUT = 1, // Use open drain output for SCL
+            // The rs one sets 1, but doc says 0
+            // .SDA_FORCE_OUT = 1, // Use open drain output for SDA
+            // .SCL_FORCE_OUT = 1, // Use open drain output for SCL
+            .SDA_FORCE_OUT = 0, // Use open drain output for SDA
+            .SCL_FORCE_OUT = 0, // Use open drain output for SCL
             .TX_LSB_FIRST = 0, // MSB first for sending
             .RX_LSB_FIRST = 0, // MSB first for receiving
             .CLK_EN = 1, // Enable clock
         });
+        std.log.debug("CTR {x:0>8}", .{regs.CTR.raw}); // DELETEME
 
         // Configure filter
         i2c.set_filter(7, 7);
@@ -233,37 +238,42 @@ pub const I2C = enum(u1) {
 
     /// Reset the FIFO buffers
     fn reset_fifo(self: I2C) void {
+        std.log.debug("Resetting FIFO", .{}); // DELETEME
         self.get_regs().FIFO_CONF.modify(.{
             .TX_FIFO_RST = 1,
             .RX_FIFO_RST = 1,
+            // Esp hal sets these here
             // .NONFIFO_EN = 0,
-            // .FIFO_PRT_EN = 1,
+            // Esp hal sets these, but why?
             // .RXFIFO_WM_THRHD = 1,
-            // .TXFIFO_WM_THRHD = 8,
+            // TODO: esp-hal does .bits(32). But that's more than 5 bits?
+            // .TXFIFO_WM_THRHD = 32,
         });
 
+        // Shouldn't be needed, it's clear on write
         self.get_regs().FIFO_CONF.modify(.{
             .TX_FIFO_RST = 0,
             .RX_FIFO_RST = 0,
         });
 
-        // clear_interrupts clear ALL
-        // TODO: Do we need to clear interrupts?
-        // self.get_regs().INT_CLR.modify(.{
-        //     .RXFIFO_WM_INT_CLR = 1,
-        //     .TXFIFO_WM_INT_CLR = 1,
-        // });
-
         // Make sure the FIFO operates in FIFO mode
         self.get_regs().FIFO_CONF.modify(.{
             .NONFIFO_EN = 0,
-            .FIFO_PRT_EN = 1,
+            .FIFO_PRT_EN = 0,
         });
         // self.updateConfig();
+
+        // TODO: Do we need to clear interrupts?
+        // clear_interrupts clears ALL, this only clear rx/tx fifo ones
+        self.get_regs().INT_CLR.modify(.{
+            .RXFIFO_WM_INT_CLR = 1,
+            .TXFIFO_WM_INT_CLR = 1,
+        });
     }
 
     /// Reset the command list
     fn reset_command_list(self: I2C) void {
+        std.log.debug("Resetting command list", .{}); // DELETEME
         // Reset all command registers
         for (0..8) |i|
             self.get_regs().COMD[@intCast(i)].write_raw(0);
@@ -271,24 +281,31 @@ pub const I2C = enum(u1) {
 
     /// Set the filter threshold in clock cycles
     fn set_filter(self: I2C, sda_threshold: ?u4, scl_threshold: ?u4) void {
-        // TODO: Maybe do in two writes?
-        if (sda_threshold) |threshold| {
-            self.get_regs().FILTER_CFG.modify(.{
-                .SDA_FILTER_THRES = threshold,
-                .SDA_FILTER_EN = 1,
-            });
-        } else {
-            self.get_regs().FILTER_CFG.modify(.{ .SDA_FILTER_EN = 0 });
-        }
-
-        if (scl_threshold) |threshold| {
-            self.get_regs().FILTER_CFG.modify(.{
-                .SCL_FILTER_THRES = threshold,
-                .SCL_FILTER_EN = 1,
-            });
-        } else {
-            self.get_regs().FILTER_CFG.modify(.{ .SCL_FILTER_EN = 0 });
-        }
+        // // TODO: Maybe do in two writes?
+        // if (sda_threshold) |threshold| {
+        //     self.get_regs().FILTER_CFG.modify(.{
+        //         .SDA_FILTER_THRES = threshold,
+        //         .SDA_FILTER_EN = 1,
+        //     });
+        // } else {
+        //     self.get_regs().FILTER_CFG.modify(.{ .SDA_FILTER_EN = 0 });
+        // }
+        //
+        // // This UNSETs the SDA stuff (maybe) since we read back 0 in these bits
+        // if (scl_threshold) |threshold| {
+        //     self.get_regs().FILTER_CFG.modify(.{
+        //         .SCL_FILTER_THRES = threshold,
+        //         .SCL_FILTER_EN = 1,
+        //     });
+        // } else {
+        //     self.get_regs().FILTER_CFG.modify(.{ .SCL_FILTER_EN = 0 });
+        // }
+        self.get_regs().FILTER_CFG.write(.{
+            .SDA_FILTER_THRES = if (sda_threshold) |t| t else 0,
+            .SDA_FILTER_EN = if (sda_threshold) |_| @as(u1, 1) else @as(u1, 0),
+            .SCL_FILTER_THRES = if (scl_threshold) |t| t else 0,
+            .SCL_FILTER_EN = if (scl_threshold) |_| @as(u1, 1) else @as(u1, 0),
+        });
     }
 
     /// Sets the frequency of the I2C interface
@@ -313,10 +330,13 @@ pub const I2C = enum(u1) {
         const setup: u9 = @intCast(half_cycle);
         const hold: u9 = @intCast(half_cycle);
         // Set timeout value to 10 bus cycles
-        // 100 * 20 = 20'000 which doesn't fit // DELETEME
         // This value is the exponent e.g. 2^timeout cycles
         // TODO: CLz
         const timeout: u5 = @intCast(std.math.log2(half_cycle * 20));
+        std.log.debug(
+            "scl low {} scl high {} sda hold {} sda sample {} setup {} hold {} timeout {}",
+            .{ scl_low, scl_high, sda_hold, sda_sample, setup, hold, timeout },
+        );
 
         // Set clock divider
         self.get_regs().CLK_CONF.modify(.{
@@ -372,10 +392,13 @@ pub const I2C = enum(u1) {
         // Ensure configuration is propagated
         self.get_regs().CTR.modify(.{ .CONF_UPGATE = 1 });
 
-        // Start transmission
+        // Start transmission, causes peripheral to read its commands from COMD
         self.get_regs().CTR.modify(.{ .TRANS_START = 1 });
 
-        const deadline = mdf.time.Deadline.init_relative(time.get_time_since_boot(), timeout);
+        // TODO: Maybe take a deadline and have the caller (read or write) change the timeout to a
+        // deadline to account for time getting to here.
+        // const deadline = mdf.time.Deadline.init_relative(time.get_time_since_boot(), timeout);
+        _ = timeout;
 
         // Monitor for completion or errors
         while (true) {
@@ -395,9 +418,8 @@ pub const I2C = enum(u1) {
                 break;
 
             // Check for timeout
-            if (deadline.is_reached_by(time.get_time_since_boot())) {
-                return Error.Timeout;
-            }
+            // if (deadline.is_reached_by(time.get_time_since_boot()))
+            // return Error.Timeout;
         }
 
         // Verify all commands were executed
@@ -468,6 +490,13 @@ pub const I2C = enum(u1) {
             .COMMAND = Command.toValue(.Start),
             .COMMAND_DONE = 0,
         });
+        //   DELETEME>>
+        std.log.debug("Writing {b:0>14} to 0x{x:0>8}", .{
+            Command.toValue(.Start),
+            @intFromPtr(&self.get_regs().COMD[cmd_start_idx.*]),
+        });
+        std.log.debug("Read back: 0x{x:0>8}", .{self.get_regs().COMD[cmd_start_idx.*].raw});
+        //   DELETEME<<
         cmd_start_idx.* += 1;
 
         // Load address with READ bit into FIFO
@@ -485,6 +514,12 @@ pub const I2C = enum(u1) {
             .COMMAND = write_cmd.toValue(),
             .COMMAND_DONE = 0,
         });
+        //   DELETEME>>
+        std.log.debug("Writing {b:0>14} to 0x{x:0>8}", .{
+            Command.toValue(.Start),
+            @intFromPtr(&self.get_regs().COMD[cmd_start_idx.*]),
+        });
+        //   DELETEME<<
         cmd_start_idx.* += 1;
 
         // For reading multiple bytes, first n-1 bytes with ACK
@@ -497,6 +532,12 @@ pub const I2C = enum(u1) {
                 .COMMAND = read_cmd.toValue(),
                 .COMMAND_DONE = 0,
             });
+            //   DELETEME>>
+            std.log.debug("Writing {b:0>14} to 0x{x:0>8}", .{
+                read_cmd.toValue(),
+                @intFromPtr(&self.get_regs().COMD[cmd_start_idx.*]),
+            });
+            //   DELETEME<<
             cmd_start_idx.* += 1;
         }
 
@@ -509,6 +550,12 @@ pub const I2C = enum(u1) {
             .COMMAND = last_read_cmd.toValue(),
             .COMMAND_DONE = 0,
         });
+        //   DELETEME>>
+        std.log.debug("Writing {b:0>14} to 0x{x:0>8}", .{
+            last_read_cmd.toValue(),
+            @intFromPtr(&self.get_regs().COMD[cmd_start_idx.*]),
+        });
+        //   DELETEME<<
         cmd_start_idx.* += 1;
 
         // STOP command
@@ -516,9 +563,19 @@ pub const I2C = enum(u1) {
             .COMMAND = Command.toValue(.Stop),
             .COMMAND_DONE = 0,
         });
+        //   DELETEME>>
+        std.log.debug("Writing {b:0>14} to 0x{x:0>8}", .{
+            Command.toValue(.Stop),
+            @intFromPtr(&self.get_regs().COMD[cmd_start_idx.*]),
+        });
+        //   DELETEME<<
         cmd_start_idx.* += 1;
 
         // NOTE: These read back as 0. What is going on?
+        //   DELETEME>>
+        for (0..cmd_start_idx.*) |i|
+            std.log.debug("Command at {d}: {X:0>8}", .{ i, self.get_regs().COMD[i].raw });
+        //   DELETEME<<
     }
 
     /// Read data from an I2C slave
@@ -537,7 +594,9 @@ pub const I2C = enum(u1) {
 
         // Add read operation
         var cmd_idx: usize = 0;
-        try self.add_read_op(addr, dst.len, &cmd_idx);
+        self.add_read_op(addr, dst.len, &cmd_idx) catch |e| {
+            std.log.debug("Error adding read op {any}", .{e});
+        };
 
         // Execute transmission
         try self.execute_transmission(timeout);

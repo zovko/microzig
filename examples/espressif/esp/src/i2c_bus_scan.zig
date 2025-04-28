@@ -24,6 +24,11 @@ pub fn main() !void {
     //     pin.apply(.{});
     // }
 
+    inline for (&.{ scl_pin, sda_pin }) |pin| {
+        // Give the pin a sane default config
+        pin.apply(.{});
+    }
+
     try i2c0.apply(
         .{ .sda = sda_pin, .scl = scl_pin },
         // TODO: Take hal.clock_config?
@@ -31,15 +36,20 @@ pub fn main() !void {
     );
 
     std.log.info("Hello", .{}); // DELETEME
-    for (0..std.math.maxInt(u7)) |addr| {
+    for (0x20..0x21) |addr| {
+        // for (0..std.math.maxInt(u7)) |addr| {
         const a: i2c.Address = @enumFromInt(addr);
         std.log.info("Trying {x:0>2}", .{addr}); // DELETEME
 
         // Skip over any reserved addresses.
-        if (a.is_reserved()) continue;
+        if (a.is_reserved()) {
+            std.log.info("Reserved", .{});
+            continue;
+        }
 
         var rx_data: [1]u8 = undefined;
-        _ = i2c0.read_blocking(a, &rx_data, time.Duration.from_ms(250)) catch |e| {
+        _ = i2c0.read_blocking(a, &rx_data, null) catch |e| {
+            // _ = i2c0.read_blocking(a, &rx_data, time.Duration.from_ms(250)) catch |e| {
             std.log.info("Error {any}", .{e}); // DELETEME
             continue;
         };
